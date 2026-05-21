@@ -84,12 +84,12 @@ def restart_adb_server() -> bool:
     try:
         print("[ADB] 🔴 kill-server...")
         subprocess.run(['adb', 'kill-server'], capture_output=True, timeout=5)
-        time.sleep(1)
+        time.sleep(5)
         print("[ADB] 🟢 start-server...")
         subprocess.run(['adb', 'start-server'], capture_output=True, timeout=10)
-        time.sleep(2)
-        print("[ADB] ⏳ жду авто-обнаружения (5с)...")
         time.sleep(5)
+        print("[ADB] ⏳ жду авто-обнаружения (5с)...")
+        time.sleep(15)
         devs = get_devices()
         print(f"[ADB] ✅ сервер жив, устройств: {len(devs)}")
         for d in devs:
