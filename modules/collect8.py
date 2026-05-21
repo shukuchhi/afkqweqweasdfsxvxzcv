@@ -1,25 +1,12 @@
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.adb_helper import check_adb_devices
 
 import time
 import subprocess
 from utils.adb_utils import connect_adb, take_screenshot, tap
 from utils.image_processing import find_template
-
-def check_adb_devices():
-    """Проверяем, есть ли подключенные устройства через ADB."""
-    try:
-        result = subprocess.run(['adb', 'devices'], capture_output=True, text=True)
-        print("ADB devices output:")
-        print(result.stdout)
-        if "device" not in result.stdout:
-            print("No devices found via ADB. Please ensure your emulator is running and connected.")
-            return False 
-        return True
-    except Exception as e:
-        print(f"Error checking ADB devices: {e}")
-        return False
 
 def run(serial=None):
     print("Starting collect8...")

@@ -1,94 +1,76 @@
-import sys
-import os
-import json
-import argparse
-import time
-import datetime
-import subprocess
-import requests
+"""
+MULTI-INSTANCE BOT v2 — с защитой от ADB-сбоев.
+Когда эмулятор теряет ADB: restart_adb_server() вместо restart_ldplayer().
+Другие инстансы ждут (маркер), а не падают.
+"""
+
+import sys, os, json, argparse, time, datetime, subprocess, requests
 from multiprocessing import Process, Queue
 
 # ==============================================================================
-#                               НАСТРОЙКИ (CONFIG)
+# НАСТРОЙКИ (CONFIG)
 # ==============================================================================
 
-LDPLAYER_PATH = r"D:\LDPlayer\LDPlayer14"
-LDPLAYER_EXE = os.path.join(LDPLAYER_PATH, "dnplayer.exe")
-LDCONSOLE_EXE = os.path.join(LDPLAYER_PATH, "dnconsole.exe")
-BOT_CONFIG_PATH = r"C:\Users\shukuchhi\Documents\425\config.json"
-BOT_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "bot_settings.json")
-DEFAULT_SERIAL = "emulator-5558"
+LDPLAYER_PATH      = r"D:\LDPlayer\LDPlayer14"
+LDPLAYER_EXE       = os.path.join(LDPLAYER_PATH, "dnplayer.exe")
+LDCONSOLE_EXE      = os.path.join(LDPLAYER_PATH, "dnconsole.exe")
+BOT_CONFIG_PATH    = r"C:\Users\shukuchhi\Documents\425\config.json"
+BOT_SETTINGS_PATH  = os.path.join(os.path.dirname(__file__), "config\bot_settings.json")
+DEFAULT_SERIAL     = "emulator-5558"
 
-# Настройки Telegram
-TG_TOKEN = "8406867386:AAHcfVmPfbV2SfqqDJYO1DI55l3E9GBFyIE"
+TG_TOKEN  = "8406867386:AAHcfVmPfbV2SfqqDJYO1DI55l3E9GBFyIE"
 TG_CHAT_ID = "1767791884"
 
-# Таймауты
-TIMEOUT_CHANGE_ACCOUNTS = 300
-TIMEOUT_GAME_BOTS = 900
-TIMEOUT_DEFAULT = 600
+TIMEOUT_CHANGE_ACCOUNTS    = 300
+TIMEOUT_GAME_BOTS          = 900
+TIMEOUT_DEFAULT            = 600
 TIMEOUT_EMAIL_VERIFICATION = 600
-REBOOT_WAIT_TIME = 120
+REBOOT_WAIT_TIME           = 120
 
+# ==============================================================================
+# ИМПОРТ МОДУЛЕЙ
 # ==============================================================================
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
 
-from modules.account_creation import run as accountcreation
-from modules.gamebot1 import run as game1
-from modules.collect1 import run as collect1
-from modules.gamebot2 import run as game2
-from modules.gamebot1_5 import run as game4
-from modules.collect2 import run as collect2
-from modules.collect3 import run as collect3
-from modules.collect4 import run as collect4
-from modules.collect5_1 import run as collect5
-from modules.collect6 import run as collect6
-from modules.collect8 import run as collect8
-from modules.email_verification import run as email_verification
+from modules.account_creation       import run as accountcreation
+from modules.gamebot1               import run as game1
+from modules.collect1               import run as collect1
+from modules.gamebot2               import run as game2
+from modules.gamebot1_5             import run as game4
+from modules.collect2               import run as collect2
+from modules.collect3               import run as collect3
+from modules.collect4               import run as collect4
+from modules.collect5_1             import run as collect5
+from modules.collect6               import run as collect6
+from modules.collect8               import run as collect8
+from modules.email_verification     import run as email_verification
 from modules.emain_verification_vilet import run as email_recovery
-from modules.change_accounts import run as change_accounts
-from modules.email_verification200 import run as email_verification200
+from modules.change_accounts        import run as change_accounts
+from modules.email_verification200  import run as email_verification200
+
+# ═══ НОВОЕ: ADB-Helper для восстановления ═══
+from utils.adb_helper import restart_adb_server, is_online
 
 # ==============================================================================
-#                          НАСТРОЙКИ ВОПРОСОВ
-# ==============================================================================
-#
-#   Чтобы добавить свой вопрос:
-#   1. Придумай ключ (например "my_setting")
-#   2. Напиши вопрос в "question"
-#   3. Добавь варианты ответов в "options"
-#      "1": {"label": "Описание", "value": значение}
-#   Пример добавлен внизу в комментарии
-#
+# НАСТРОЙКИ ВОПРОСОВ
 # ==============================================================================
 
 QUESTIONS = {
     "tickets_count": {
         "question": "На аккаунте сколько билетов?",
         "options": {
-            "1": {"label": "0 билетов",   "value": 0},
+            "1": {"label": "0 билетов",  "value": 0},
             "2": {"label": "200 билетов", "value": 200},
         }
     },
-
-    # --- ДОБАВЛЯЙ СВОИ ВОПРОСЫ НИЖЕ ---
-    # "my_setting": {
-    #     "question": "Твой вопрос здесь?",
-    #     "options": {
-    #         "1": {"label": "Вариант А", "value": "a"},
-    #         "2": {"label": "Вариант Б", "value": "b"},
-    #     }
-    # },
 }
 
-
 # ==============================================================================
-#                        РАБОТА С НАСТРОЙКАМИ (JSON)
+# РАБОТА С НАСТРОЙКАМИ (JSON)
 # ==============================================================================
 
 def load_bot_settings() -> dict:
-    """Загружает настройки из bot_settings.json"""
     if not os.path.exists(BOT_SETTINGS_PATH):
         print(f"[WARN] Файл настроек не найден: {BOT_SETTINGS_PATH}")
         print("[WARN] Используем значение по умолчанию: 0 билетов")
@@ -102,73 +84,48 @@ def load_bot_settings() -> dict:
 
 
 def save_bot_settings(settings: dict):
-    """Сохраняет настройки в bot_settings.json"""
     with open(BOT_SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=4)
     print(f"\n✅ Настройки сохранены в '{BOT_SETTINGS_PATH}'")
 
 
 def ask_and_save_settings():
-    """
-    Задаёт все вопросы из QUESTIONS пользователю
-    и сохраняет ответы в bot_settings.json
-    """
     print("\n" + "=" * 50)
-    print("          НАСТРОЙКА БОТА")
+    print(" НАСТРОЙКА БОТА")
     print("=" * 50)
-
     settings = load_bot_settings()
 
     for key, data in QUESTIONS.items():
         print(f"\n❓ {data['question']}")
-
-        # Показываем варианты
         for num, option in data["options"].items():
             print(f"   {num} - {option['label']}")
-
-        # Показываем текущее значение если есть
         if key in settings:
             print(f"   (Текущее значение: {settings[key]} | Enter = оставить)")
 
-        # Читаем ввод
         while True:
             user_input = input("   Твой выбор: ").strip()
-
-            # Если пусто и есть текущее — оставляем старое
             if user_input == "" and key in settings:
-                print(f"   ↩️  Оставлено: {settings[key]}")
+                print(f"   ↩️ Оставлено: {settings[key]}")
                 break
-
             if user_input in data["options"]:
                 chosen_value = data["options"][user_input]["value"]
                 settings[key] = chosen_value
-                print(f"   ✔️  Выбрано: {data['options'][user_input]['label']}")
+                print(f"   ✔️ Выбрано: {data['options'][user_input]['label']}")
                 break
             else:
                 valid = ", ".join(data["options"].keys())
-                print(f"   ⚠️  Неверный ввод. Введи одно из: {valid}")
+                print(f"   ⚠️ Неверный ввод. Введи одно из: {valid}")
 
     save_bot_settings(settings)
-
     print("\n📋 Итоговые настройки:")
     print(json.dumps(settings, ensure_ascii=False, indent=4))
-
     return settings
 
 
 def get_email_verification_func() -> tuple:
-    """
-    Возвращает (функция, название) верификации
-    в зависимости от количества билетов в настройках.
-
-    0 билетов   -> email_verification
-    200 билетов -> email_verification200
-    """
     settings = load_bot_settings()
     tickets = settings.get("tickets_count", 0)
-
     print(f"[SETTINGS] Билетов на аккаунте: {tickets}")
-
     if tickets == 200:
         print("[SETTINGS] Используем: email_verification200")
         return email_verification200, "Email Verification 200"
@@ -178,16 +135,11 @@ def get_email_verification_func() -> tuple:
 
 
 # ==============================================================================
-#                             TELEGRAM
+# TELEGRAM
 # ==============================================================================
 
 def send_telegram_alert(serial, script_name, reason_title, error_text="", custom_header=None):
-    """
-    Отправляет уведомление в Telegram.
-    custom_header: Заменяет стандартный заголовок (для красивых уведомлений).
-    """
     current_time = datetime.datetime.now().strftime("%H:%M:%S")
-
     if custom_header:
         header = f"{custom_header} {current_time}"
     else:
@@ -199,18 +151,12 @@ def send_telegram_alert(serial, script_name, reason_title, error_text="", custom
         f"📜 <b>Скрипт:</b> {script_name}\n"
         f"❌ <b>Причина:</b> {reason_title}\n"
     )
-
     if error_text:
         clean_error = str(error_text).replace("<", "&lt;").replace(">", "&gt;")
         message += f"🔻 <b>Текст ошибки:</b>\n<code>{clean_error}</code>"
 
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TG_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-
+    data = {"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         requests.post(url, data=data, timeout=5)
     except Exception as e:
@@ -218,7 +164,7 @@ def send_telegram_alert(serial, script_name, reason_title, error_text="", custom
 
 
 # ==============================================================================
-#                          УПРАВЛЕНИЕ ЭМУЛЯТОРОМ
+# УПРАВЛЕНИЕ ЭМУЛЯТОРОМ
 # ==============================================================================
 
 def kill_specific_process(target_index):
@@ -235,12 +181,8 @@ def kill_specific_process(target_index):
                     pid = parts[-1]
                     if pid.isdigit():
                         print(f"[KILLER] Убиваем PID: {pid}")
-                        subprocess.run(
-                            f"taskkill /F /PID {pid}",
-                            shell=True,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL
-                        )
+                        subprocess.run(f"taskkill /F /PID {pid}", shell=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"[KILLER ERROR] {e}")
 
@@ -265,9 +207,37 @@ def restart_ldplayer(index=0):
     print("[SYSTEM] Готово.")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# НОВОЕ: ADB-ВОССТАНОВЛЕНИЕ перед ребутом эмулятора
+# ══════════════════════════════════════════════════════════════════════════════
+
+def try_adb_recovery(serial: str, script_name: str) -> bool:
+    """
+    Если ошибка похожа на потерю ADB — рестартим ADB-сервер вместо эмулятора.
+    Возвращает True если ADB восстановлен (ребут эмулятора НЕ нужен).
+    """
+    print(f"[ADB-RECOVERY] Проверяю {serial} после сбоя '{script_name}'...")
+
+    # Сначала проверяем — может девайс уже жив
+    if is_online(serial):
+        print(f"[ADB-RECOVERY] ✅ {serial} онлайн, ретрай без ребута")
+        return True
+
+    # Рестарт ADB-сервера (другие инстансы увидят маркер и подождут)
+    print(f"[ADB-RECOVERY] 🔄 Рестарт ADB-сервера...")
+    restart_adb_server()
+
+    time.sleep(3)
+    if is_online(serial):
+        print(f"[ADB-RECOVERY] ✅ {serial} восстановлен!")
+        return True
+
+    print(f"[ADB-RECOVERY] ❌ {serial} всё ещё оффлайн, нужен ребут эмулятора")
+    return False
+
 
 # ==============================================================================
-#                        ЗАПУСК СКРИПТОВ В ПРОЦЕССАХ
+# ЗАПУСК СКРИПТОВ В ПРОЦЕССАХ
 # ==============================================================================
 
 def worker_wrapper(queue, func, serial):
@@ -281,15 +251,14 @@ def worker_wrapper(queue, func, serial):
 def run_script_safe(script_func, script_name, serial, timeout, mute_alerts=False):
     """
     Запускает скрипт в отдельном процессе с таймаутом.
-    mute_alerts=True: не отправлять '⚠️ Сбой' автоматически.
-    Возвращает True если успешно, False если таймаут или ошибка.
+    Возвращает True если успешно, False если ошибка.
     """
     error_queue = Queue()
     p = Process(target=worker_wrapper, args=(error_queue, script_func, serial))
     p.start()
     p.join(timeout)
 
-    # 1. ТАЙМАУТ
+    # ТАЙМАУТ
     if p.is_alive():
         print(f"\n[TIMEOUT] Скрипт '{script_name}' завис.")
         if not mute_alerts:
@@ -298,7 +267,7 @@ def run_script_safe(script_func, script_name, serial, timeout, mute_alerts=False
         p.join()
         return False
 
-    # 2. ОШИБКА
+    # ОШИБКА
     if p.exitcode != 0:
         print(f"\n[CRASH] Скрипт '{script_name}' упал.")
         error_msg = "Unknown Error"
@@ -320,17 +289,14 @@ def run_script_safe(script_func, script_name, serial, timeout, mute_alerts=False
 
 
 # ==============================================================================
-#                               ГЛАВНЫЙ ЦИКЛ
+# ГЛАВНЫЙ ЦИКЛ
 # ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--serial', type=str, default=DEFAULT_SERIAL)
-    parser.add_argument(
-        '--setup',
-        action='store_true',
-        help='Запустить настройку и сохранить в bot_settings.json'
-    )
+    parser.add_argument('--setup', action='store_true',
+                        help='Запустить настройку и сохранить в bot_settings.json')
     args = parser.parse_args()
 
     if args.setup:
@@ -356,80 +322,74 @@ def main():
     current_settings = load_bot_settings()
     print(f"[SETTINGS] Текущие настройки: {json.dumps(current_settings, ensure_ascii=False)}")
 
-    # Список задач БЕЗ Account Creation (он обрабатывается отдельно)
     pre_email_scripts = [
-        ("Game 1 AFK Bot",   game1),
-        ("Collect 1",        collect1),
-        ("Game 2 AFK Bot",   game4),
-        ("Collect 2",        collect2),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 3",        collect3),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 4",        collect4),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 5",        collect5),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 5",        collect6),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 5",        collect6),
-        ("Game 2 AFK Bot",   game2),
-        ("Collect 8",        collect8),
+        ("Game 1 AFK Bot",       game1),
+        ("Collect 1",            collect1),
+        ("Game 2 AFK Bot",       game4),
+        ("Collect 2",            collect2),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 3",            collect3),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 4",            collect4),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 5",            collect5),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 5",            collect6),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 5",            collect6),
+        ("Game 2 AFK Bot",       game2),
+        ("Collect 8",            collect8),
     ]
 
     cycle_count = 0
+
     while True:
         cycle_count += 1
         print(f"\n>>> ЦИКЛ {cycle_count} <<<")
         restart_cycle_needed = False
 
-        # ------------------------------------------------------------------
-        # 1a. ACCOUNT CREATION (особая обработка сбоя)
-        #     Если падает -> TG уведомление (штатное) + change_accounts
-        #     Без перезапуска эмулятора!
-        # ------------------------------------------------------------------
+        # ── 1a. ACCOUNT CREATION ──
         print(f"\n[RUN] Account Creation (Max: {TIMEOUT_DEFAULT}s)...")
-        success = run_script_safe(
-            accountcreation, "Account Creation",
-            args.serial, TIMEOUT_DEFAULT
-        )
-
+        success = run_script_safe(accountcreation, "Account Creation",
+                                  args.serial, TIMEOUT_DEFAULT)
         if not success:
             print("[FAIL] Сбой в Account Creation.")
             print("[RECOVERY] Запускаем смену аккаунта (без перезапуска эмулятора)...")
 
-            run_script_safe(
-                change_accounts, "Emergency Change (Account Creation)",
-                args.serial, TIMEOUT_CHANGE_ACCOUNTS
-            )
+            # ═══ ПРОБУЕМ ADB-ВОССТАНОВЛЕНИЕ ═══
+            if try_adb_recovery(args.serial, "Account Creation"):
+                # ADB жив — ретраим смену аккаунта
+                pass
 
+            run_script_safe(change_accounts, "Emergency Change (Account Creation)",
+                            args.serial, TIMEOUT_CHANGE_ACCOUNTS)
             print("[RECOVERY] Рестарт цикла.")
-            continue  # <-- просто идём на следующий цикл
+            continue
 
         time.sleep(2)
 
-        # ------------------------------------------------------------------
-        # 1b. ОСТАЛЬНЫЕ СКРИПТЫ (стандартная обработка сбоя)
-        # ------------------------------------------------------------------
+        # ── 1b. ОСТАЛЬНЫЕ СКРИПТЫ ──
         for script_name, script_func in pre_email_scripts:
-
-            if "Game" in script_name:
-                timeout = TIMEOUT_GAME_BOTS
-            else:
-                timeout = TIMEOUT_DEFAULT
-
+            timeout = TIMEOUT_GAME_BOTS if "Game" in script_name else TIMEOUT_DEFAULT
             print(f"\n[RUN] {script_name} (Max: {timeout}s)...")
             success = run_script_safe(script_func, script_name, args.serial, timeout)
 
             if not success:
                 print(f"[FAIL] Сбой в {script_name}. Восстановление...")
-                restart_ldplayer(emulator_index)
+
+                # ═══════════════════════════════════════════════
+                # НОВОЕ: сначала пробуем ADB-восстановление
+                # и ТОЛЬКО если не помогло — ребутаем эмулятор
+                # ═══════════════════════════════════════════════
+                adb_ok = try_adb_recovery(args.serial, script_name)
+
+                if not adb_ok:
+                    # ADB не помог — полный ребут эмулятора
+                    restart_ldplayer(emulator_index)
 
                 print("[RECOVERY] Аварийная смена аккаунта...")
-                run_script_safe(
-                    change_accounts, "Emergency Change",
-                    args.serial, TIMEOUT_CHANGE_ACCOUNTS
-                )
-
+                run_script_safe(change_accounts, "Emergency Change",
+                                args.serial, TIMEOUT_CHANGE_ACCOUNTS)
                 print("[RECOVERY] Рестарт цикла.")
                 restart_cycle_needed = True
                 break
@@ -439,9 +399,7 @@ def main():
         if restart_cycle_needed:
             continue
 
-        # ------------------------------------------------------------------
-        # 2. ВЕРИФИКАЦИЯ ПОЧТЫ
-        # ------------------------------------------------------------------
+        # ── 2. ВЕРИФИКАЦИЯ ПОЧТЫ ──
         ev_func, ev_name = get_email_verification_func()
         print(f"\n[RUN] {ev_name}...")
 
@@ -449,65 +407,57 @@ def main():
             print("[OK] Email confirmed.")
         else:
             print("[WARN] Основная верификация не удалась. Запуск прослойки...")
-
             recovery_success = False
             max_tries = 2
 
             for i in range(1, max_tries + 1):
                 header_text = f"🔄 <b>Попытка восстановления {i}/{max_tries}</b>"
-                send_telegram_alert(
-                    args.serial, "Email Recovery",
-                    "Пробуем через vilet...",
-                    custom_header=header_text
-                )
+                send_telegram_alert(args.serial, "Email Recovery",
+                                    "Пробуем через vilet...", custom_header=header_text)
 
-                restart_ldplayer(emulator_index)
+                # ═══ ADB-восстановление перед ребутом ═══
+                if not is_online(args.serial):
+                    restart_adb_server()
+                    time.sleep(3)
 
-                if run_script_safe(
-                    email_recovery, f"Email Recovery #{i}",
-                    args.serial, TIMEOUT_EMAIL_VERIFICATION,
-                    mute_alerts=True
-                ):
+                if not is_online(args.serial):
+                    restart_ldplayer(emulator_index)
+
+                if run_script_safe(email_recovery, f"Email Recovery #{i}",
+                                   args.serial, TIMEOUT_EMAIL_VERIFICATION, mute_alerts=True):
                     header_text = "✅ <b>ПОЧИНИЛИ!</b>"
-                    send_telegram_alert(
-                        args.serial, "Email Recovery",
-                        "Сработало!",
-                        custom_header=header_text
-                    )
+                    send_telegram_alert(args.serial, "Email Recovery",
+                                        "Сработало!", custom_header=header_text)
                     recovery_success = True
                     break
                 else:
                     header_text = f"⚠️ <b>Неудача {i}/{max_tries}</b>"
-                    send_telegram_alert(
-                        args.serial, f"Email Recovery #{i}",
-                        "Скрипт упал",
-                        custom_header=header_text
-                    )
+                    send_telegram_alert(args.serial, f"Email Recovery #{i}",
+                                        "Скрипт упал", custom_header=header_text)
 
             if not recovery_success:
                 print("[FATAL] Восстановление не удалось.")
-                send_telegram_alert(
-                    args.serial, "Email Verification FATAL",
-                    "Все попытки (2/2) провалены. Создаем новый аккаунт."
-                )
-                restart_ldplayer(emulator_index)
-                run_script_safe(
-                    change_accounts, "Failed Acc Change",
-                    args.serial, TIMEOUT_CHANGE_ACCOUNTS
-                )
+                send_telegram_alert(args.serial, "Email Verification FATAL",
+                                    "Все попытки (2/2) провалены. Создаем новый аккаунт.")
+
+                if not is_online(args.serial):
+                    restart_adb_server()
+                    time.sleep(3)
+                if not is_online(args.serial):
+                    restart_ldplayer(emulator_index)
+
+                run_script_safe(change_accounts, "Failed Acc Change",
+                                args.serial, TIMEOUT_CHANGE_ACCOUNTS)
                 continue
 
-        # ------------------------------------------------------------------
-        # 3. СМЕНА АККАУНТА (ФИНАЛ)
-        # ------------------------------------------------------------------
+        # ── 3. СМЕНА АККАУНТА ──
         print(f"\n[RUN] Change Accounts...")
-        success = run_script_safe(
-            change_accounts, "Change Accounts",
-            args.serial, TIMEOUT_CHANGE_ACCOUNTS
-        )
-
+        success = run_script_safe(change_accounts, "Change Accounts",
+                                  args.serial, TIMEOUT_CHANGE_ACCOUNTS)
         if not success:
-            restart_ldplayer(emulator_index)
+            # ═══ ADB-восстановление перед ребутом ═══
+            if not try_adb_recovery(args.serial, "Change Accounts"):
+                restart_ldplayer(emulator_index)
 
         print(f"\n>>> ЦИКЛ {cycle_count} ЗАВЕРШЕН <<<")
         time.sleep(10)

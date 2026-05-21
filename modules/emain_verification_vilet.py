@@ -14,6 +14,7 @@ from selenium.webdriver.chrome.options import Options
 
 # Подключаем пути
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.adb_helper import check_adb_devices
 
 # Импортируем обновленные функции
 from utils.adb_utils import connect_adb, take_screenshot, tap, adb_input_text, swipe, find_template
