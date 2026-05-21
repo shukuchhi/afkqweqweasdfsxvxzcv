@@ -15,8 +15,8 @@ LDPLAYER_PATH      = r"D:\LDPlayer\LDPlayer14"
 LDPLAYER_EXE       = os.path.join(LDPLAYER_PATH, "dnplayer.exe")
 LDCONSOLE_EXE      = os.path.join(LDPLAYER_PATH, "dnconsole.exe")
 BOT_CONFIG_PATH    = r"C:\Users\shukuchhi\Documents\425\config.json"
-BOT_SETTINGS_PATH  = os.path.join(os.path.dirname(__file__), "config\bot_settings.json")
-DEFAULT_SERIAL     = "emulator-5558"
+BOT_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "config", "bot_settings.json")
+DEFAULT_SERIAL     = "emulator-5554"
 
 TG_TOKEN  = "8406867386:AAHcfVmPfbV2SfqqDJYO1DI55l3E9GBFyIE"
 TG_CHAT_ID = "1767791884"
@@ -51,6 +51,7 @@ from modules.email_verification200  import run as email_verification200
 
 # ═══ НОВОЕ: ADB-Helper для восстановления ═══
 from utils.adb_helper import restart_adb_server, is_online
+from utils.vpn_manager import ensure_vpn
 
 # ==============================================================================
 # НАСТРОЙКИ ВОПРОСОВ
@@ -81,6 +82,7 @@ def load_bot_settings() -> dict:
     except Exception as e:
         print(f"[ERROR] Ошибка чтения настроек: {e}")
         return {}
+        
 
 
 def save_bot_settings(settings: dict):
@@ -120,6 +122,13 @@ def ask_and_save_settings():
     print("\n📋 Итоговые настройки:")
     print(json.dumps(settings, ensure_ascii=False, indent=4))
     return settings
+
+def get_region() -> str:
+    """Читает регион из bot_settings.json. По умолчанию 'ru'."""
+    settings = load_bot_settings()
+    region = settings.get("region", "ru")
+    print(f"[SETTINGS] Регион: {region.upper()}")
+    return region
 
 
 def get_email_verification_func() -> tuple:
@@ -347,6 +356,10 @@ def main():
         cycle_count += 1
         print(f"\n>>> ЦИКЛ {cycle_count} <<<")
         restart_cycle_needed = False
+        region = get_region()
+        if not ensure_vpn(region):
+            time.sleep(30)
+            continue
 
         # ── 1a. ACCOUNT CREATION ──
         print(f"\n[RUN] Account Creation (Max: {TIMEOUT_DEFAULT}s)...")
