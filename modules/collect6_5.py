@@ -30,6 +30,7 @@ def run(serial=None):
     interface_template = os.path.join(base_dir, "templates", "match_podtv.png")
     interface1_template = os.path.join(base_dir, "templates", "collect3_2.png")  # Первый интерфейс
     interface2_template = os.path.join(base_dir, "templates", "pyat.png")
+    interfaceprod_template = os.path.join(base_dir, "templates", "proda8lvl.png")
     interface3_template = os.path.join(base_dir, "templates", "collect5.png") # Второй интерфейс
     print(f"Looking for first interface at: {interface1_template}")
     print(f"Looking for second interface at: {interface2_template}")
@@ -44,6 +45,23 @@ def run(serial=None):
     tap(device, first_coords[0], first_coords[1])
     time.sleep(0.55)
     tap(device, first_coords[0], first_coords[1])
+
+    max_attempts = 30  # Максимальное количество попыток для поиска интерфейса
+    attempt = 0
+    while attempt < max_attempts:
+        screenshot_path = take_screenshot(device)
+        print(f"Attempt {attempt + 1}: Checking for first interface...")
+        if find_template(screenshot_path, interfaceprod_template):
+            print("First interface detected!")
+            break
+        print("First interface not detected yet")
+        time.sleep(1)
+        attempt += 1
+
+    proda = (1743, 1017)
+    tap(device,  proda[0], proda[1])
+    time.sleep(1)
+    tap(device,  proda[0], proda[1])
 
     # 2. Ждем первый интерфейс и нажимаем кнопку
     max_attempts = 30  # Максимальное количество попыток для поиска интерфейса
